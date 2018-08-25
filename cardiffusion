@@ -1,0 +1,210 @@
+from mesa import Agent,Model
+import random
+import math
+import pandas as pd
+import networkx as nx
+
+def random_pick(some_list,probabilities):
+    x=random.uniform(0,1)
+    cumulative_probability=0.0
+    for item,item_probability in zip(some_list,probabilities):
+        cumulative_probability+=item_probability
+        if x < cumulative_probability: break
+    return item
+
+
+class nev(Agent):
+    def __init__(self,unique_id,typee,size,erange,ele_use,price,model):
+        super().__init__(unique_id,model)
+        self.typee=typee
+        self.size=size
+        self.erange=erange
+        self.ele_use=ele_use
+        self.price=price
+
+    
+    def tech_evo(self,model):
+        alpha=-math.log(1.2)/math.log(2)
+        if model.year >2:
+            nev_increase=model.market[model.year-1]/model.market[model.year-2]
+            self.price=self.price*math.exp(alpha)/nev_increase
+            
+    def step(self):
+        self.tech_evo()
+        self.calcu_ope(model)
+        
+class consumer(self):
+    def __init__(self,unique_id,car_age,vkt,income,beta,edu,beta,model):
+        super().__init__(unique_id,model)
+        self.vkt=vkt
+        self.income=income
+        self.attri=model.M.node[self.unique_id-model.num_c]['attri']
+        self.car_age=random_pick(range(1,8),[0.20,0.15,0.13,0.12,0.10,0.08,0.07,0.05,0.05,0.05])
+        self.car_type=[]  
+        self.beta=beta
+        
+    def calcu_tco(self,model):
+        agts=model.schedule.agents
+        self.cars_tco=[]
+        p=0.06
+        use_year=8
+        for i in agts:
+            if isinstance(i,nev):
+                if i.typee==3:
+                    pe=6.8/10000
+                    tax_pur=i.price/11.7
+                    sub=0
+                    self.car_type.append(False)
+                elif i.typee==1:
+                    pe=0.8/10000
+                    tax_pur=0
+                    sub=0
+                    self.car_type.append(True)
+                cis=0.01*0.6*i.price+0.095+0.1480*0.6
+                tuse=0.035
+                cm=0.2
+                rsale=i.price*0.2
+                pur=p*((i.price+tax_pur-sub)*(1+p)**use_year-rsale)/((1+p)**use_year-1)
+                ope=self.vkt*300*pe*i.ele_use+cm+tuse+cis
+                tco=pur+ope
+                self.cars_tco.append(tco)
+            
+    def car_choice(self,model):
+        sum_icev_pro=0
+        sum_nev_pro=0
+        self.sn=model.M.node[self.unique_id-model.num_c]['peerpressure']/6
+        self.attri=model.M.node[self.unique_id-model.num_c]['attri']
+        for i in range(self.cars_tco):
+            self.u[i]=self.beta[0]*self.cars_tco[i]+self.beta[1]*self.sn+self.beta[2]*self.convenience[i]
+            
+        sum_icev_pro=sum(map(lambda x,y:math.exp(x) if y==True else 0,self.u,self.car_type))
+        sum_nev_pro=sum(map(lambda x,y:math.exp(x) if y==False else 0,self.u,self.car_type))
+               
+        e=4
+        #source:https://www.d1ev.com/news/shichang/62036
+        c=30000*(1+model.infra)/100000
+        ave_ranges=300
+        self.infrastructure=1-self.vkt/ave_ranges*math.exp(-e*c)
+        self.nev_pro=sum_nev_pro*self.infrastructure/(self.infrastructure*sum_nev_pro+sum_nev_pro)
+     
+        if self.car_age>7 or self.car_age==0:
+            if self.nev_pro>random.uniform(0,1):
+                self.attri=True
+                self.car_age=1
+              
+    def step(self):
+        if self.car_age!=0:
+            self.car_age+=1
+        self.calcu_tco(model)
+        self.car_choice(model)
+
+class nev_diffusion_model(Model):
+    def __init__(self,num_p,num_c,num_m):        
+        self.num_c=num_c
+        self.num_p=num_p
+        self.num_m=num_m
+        self.M=self.newman_small_world(self.num_p,6,0.1)   
+        self.schedule=RandomActivation(self)
+        self.create_agents()
+        self.market=[]
+        car_city=pd.read_csv(r'F:\thesis\car_city.csv')
+        city='shanghai'
+        self.car_city=car_city['car'][car_city['city']==city]
+        self.infra=0
+        self.year=0
+        self.nev_pro_sum1=[]
+        self.nev_pro_sum2=[]
+        self.nev_pro_sum3=[]
+        
+    def create_agents(self):
+        #initialization of cars
+        car=pd.read_csv(r'F:\thesis\new_carinfor.csv')
+        for i in range(self.num_c):
+            ranges1=car['ranges'][i]
+            ele_use1=car['ele_use'][i]
+            a=nev(i,typee1,ranges1,price1,ele_use1,self)
+            self.schedule.add(a)       
+        #initialization of consumers source:autohome.com
+        b_pd=pd.read_csv(r'F:\thesis\autohome-Wordofmouth.csv')
+        for i in range(self.num_c,self.num_p+self.num_c):
+            car_age1=random_pick([random.choice(range(1,8)),0],[0.3,0.7])
+            #source:我国城乡居民收入分布的正态估计，李建伟
+            income=random.normalvariate(17.7,20)
+            if income < 10:
+                beta=random.choice([b_pd[' 2-5'],b_pd[' 5-10']])
+            elif income <20:
+                beta=random.choice([b_pd[' 5-10'],b_pd[' 10-15'],b_pd[' 15-20']])
+            elif income<30:
+                beta=random.choice([b_pd[' 20-25'],b_pd[' 25-30'],b_pd[' 35-50']])
+            else:
+                beta=random.choice([b_pd[' 50-70'],b_pd[' >70']])
+            b=consumer(i,car_age1,income,self)
+            b.b=beta
+            b.nev_pro=0
+            b.sn=self.M.node[i-self.num_c]['peerpressure']/6
+            b.attri=self.M.node[i-self.num_c]['attri']
+            b.threshold =self.M.node[i-self.num_c]['threshold']
+            self.schedule.add(b)  
+
+    def newman_small_world(self,n,k,p):
+        G=nx.empty_graph(n)
+        G.name="newman_watts_strogatz_graph(%s,%s,%s)"%(n,k,p)
+        #由城市信息初始化
+        for i in G.nodes():
+            #rogers:Diffusion of Innovation:3% innovators,13% early adopters, 43% early majority, 28% late majority, and 12% laggards 
+            G.node[i]['threshold']=random_pick([1,2,3,4,5],[0.03,0.13,0.43,0.28,0.12])
+            G.node[i]['attri']=random_pick([True,False],[0.05,0.95])
+            G.node[i]['peerpressure']=0             
+        nlist = sorted(G.nodes())
+        fromv = nlist        
+        # connect the k/2 neighbors        
+        for j in range(1, k // 2+1):
+            tov = fromv[j:] + fromv[0:j] # the first j are now last        
+            for i in range(len(fromv)):
+                G.add_edge(fromv[i], tov[i])
+        # for each edge u-v, with probability p, randomly select existing
+        # node w and add new edge u-w
+        e = sorted(G.edges())
+        for (u, v) in e:
+            if random.random() < p:
+                w = random.choice(nlist)
+                # no self-loops and reject if edge u-w exists
+                # is that the correct NWS model?
+                while w == u or G.has_edge(u, w):
+                    w = random.choice(nlist)
+                    if G.degree(u) >= n-1:
+                        break # skip this rewiring
+                else:
+                    G.add_edge(u,w)
+        #搜集neighbor的信息，了解peer pressure的大小，peer pressure为周围购买新能源汽车的人数
+        for i in range(n):
+            for m in G.neighbors(i):
+                if G.node[m]['attri']:
+                    G.node[i]['peerpressure']+=1    
+        return G
+
+    def update_nodes_attri(self,p):
+        for i in self.M.nodes():
+            for agt in self.schedule.agents:
+                if isinstance(agt,consumer):
+                    if i==agt.unique_id:
+                        self.M.node[i]['attri']=agt.attri
+                        
+        nlist = sorted(self.M.nodes())                
+        e=sorted(self.M.edges())
+        for (u, v) in e:
+            if random.random() < p:
+                w = random.choice(nlist)
+                # no self-loops and reject if edge u-w exists
+                # is that the correct NWS model?
+                while w == u or self.M.has_edge(u, w):
+                    w = random.choice(nlist)
+                    if self.M.degree(u) >= self.num_p-1:
+                        break # skip this rewiring
+                else:
+                    self.M.add_edge(u,w)
+        #搜集neighbor的信息，了解peer pressure的大小，peer pressure为周围购买新能源汽车的人数
+        for i in range(self.num_p):
+            for m in self.M.neighbors(i):
+                if self.M.node[m]['attri']:
+                    self.M.node[i]['peerpressure']+=1  
